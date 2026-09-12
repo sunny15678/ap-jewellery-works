@@ -1,222 +1,567 @@
 "use client";
 
-export default function Home() {
+import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { supabase } from "@/lib/supabase";
+
+type Jewellery = {
+  id: string | number;
+  name: string;
+  category: string;
+  description: string | null;
+  purity: string | null;
+  weight: number | null;
+  image_url: string | null;
+};
+
+export default function AdminDashboard() {
+  const router = useRouter();
+
+  const [checking, setChecking] = useState(true);
+  const [savingRates, setSavingRates] = useState(false);
+  const [adding, setAdding] = useState(false);
+
+  const [rate22k, setRate22k] = useState("");
+  const [rate24k, setRate24k] = useState("");
+
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("Necklaces");
+  const [description, setDescription] = useState("");
+  const [purity, setPurity] = useState("22K");
+  const [weight, setWeight] = useState("");
+  const [image, setImage] = useState<File | null>(null);
+
+  const [jewellery, setJewellery] = useState<Jewellery[]>([]);
+
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    checkAdmin();
+  }, []);
+
+  async function checkAdmin() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.replace("/admin/login");
+      return;
+    }
+
+    await Promise.all([
+      loadGoldRates(),
+      loadJewellery(),
+    ]);
+
+    setChecking(false);
+  }
+
+  async function loadGoldRates() {
+    const { data, error } = await supabase
+      .from("gold_rates")
+      .select("rate_22k, rate_24k")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Gold rate error:", error);
+      return;
+    }
+
+    if (data) {
+      setRate22k(String(data.rate_22k ?? ""));
+      setRate24k(String(data.rate_24k ?? ""));
+    }
+  }
+
+  async function loadJewellery() {
+    const { data, error } = await supabase
+      .from("jewellery")
+      .select(
+        "id, name, category, description, purity, weight, image_url"
+      )
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Jewellery error:", error);
+      setError(error.message);
+      return;
+    }
+
+    setJewellery(data || []);
+  }
+
+  async function updateGoldRates(e: FormEvent) {
+    e.preventDefault();
+
+    setSavingRates(true);
+    setMessage("");
+    setError("");
+
+    const { data: existing, error: findError } = await supabase
+      .from("gold_rates")
+      .select("id")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (findError) {
+      setError(findError.message);
+      setSavingRates(false);
+      return;
+    }
+
+    let result;
+
+    const values = {
+      rate_22k: Number(rate22k),
+      rate_24k: Number(rate24k),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (existing) {
+      result = await supabase
+        .from("gold_rates")
+        .update(values)
+        .eq("id", existing.id);
+    } else {
+      result = await supabase
+        .from("gold_rates")
+        .insert(values);
+    }
+
+    if (result.error) {
+      console.error(result.error);
+      setError(result.error.message);
+    } else {
+      setMessage("Gold rates updated successfully.");
+    }
+
+    setSavingRates(false);
+  }
+
+  async function addJewellery(e: FormEvent) {
+    e.preventDefault();
+
+    setAdding(true);
+    setMessage("");
+    setError("");
+
+    try {
+      let imageUrl: string | null = null;
+
+      // Upload image
+      if (image) {
+        const extension =
+          image.name.split(".").pop()?.toLowerCase() || "jpg";
+
+        const fileName = `jewellery-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2)}.${extension}`;
+
+        const filePath = `jewellery/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("jewellery-images")
+          .upload(filePath, image);
+
+        if (uploadError) {
+          throw new Error(
+            `Image upload failed: ${uploadError.message}`
+          );
+        }
+
+        const { data } = supabase.storage
+          .from("jewellery-images")
+          .getPublicUrl(filePath);
+
+        imageUrl = data.publicUrl;
+      }
+
+      // Save jewellery
+      const { error: insertError } = await supabase
+        .from("jewellery")
+        .insert({
+          name,
+          category,
+          description: description || null,
+          purity,
+          weight: weight ? Number(weight) : null,
+          image_url: imageUrl,
+        });
+
+      if (insertError) {
+        throw new Error(insertError.message);
+      }
+
+      setMessage("Jewellery added successfully.");
+
+      setName("");
+      setCategory("Necklaces");
+      setDescription("");
+      setPurity("22K");
+      setWeight("");
+      setImage(null);
+
+      const input = document.getElementById(
+        "jewellery-image"
+      ) as HTMLInputElement | null;
+
+      if (input) {
+        input.value = "";
+      }
+
+      await loadJewellery();
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong."
+      );
+    }
+
+    setAdding(false);
+  }
+
+  async function deleteJewellery(id: string | number) {
+    const confirmed = window.confirm(
+      "Delete this jewellery item?"
+    );
+
+    if (!confirmed) return;
+
+    setMessage("");
+    setError("");
+
+    const { error } = await supabase
+      .from("jewellery")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      setError(error.message);
+      return;
+    }
+
+    setMessage("Jewellery deleted.");
+    await loadJewellery();
+  }
+
+  async function logout() {
+    await supabase.auth.signOut();
+    router.replace("/admin/login");
+  }
+
+  if (checking) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-black text-white">
+        <p className="text-xl text-yellow-400">
+          Checking admin access...
+        </p>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-black text-white">
-
       {/* HEADER */}
-      <header className="border-b border-yellow-900/40 bg-black px-8 py-6">
-        <div className="mx-auto flex max-w-7xl items-center justify-between">
+      <header className="sticky top-0 z-50 border-b border-yellow-700/30 bg-black/95 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
           <div>
-            <h1 className="text-3xl font-bold tracking-[0.3em] text-yellow-400">
-              AP
+            <h1 className="text-xl font-bold text-yellow-400 md:text-2xl">
+              AP JEWELLERY WORKS
             </h1>
 
-            <p className="text-xs tracking-[0.4em] text-gray-500">
-              JEWELLERY WORKS
+            <p className="text-sm text-gray-500">
+              Admin Dashboard
             </p>
           </div>
 
-          <a
-            href="/admin"
-            className="rounded-xl border border-yellow-700 px-6 py-3 text-yellow-400"
-          >
-            Admin
-          </a>
+          <div className="flex gap-3">
+            <Link
+              href="/"
+              className="hidden rounded-lg border border-zinc-700 px-4 py-2 text-sm text-gray-300 hover:border-yellow-500 hover:text-yellow-400 sm:block"
+            >
+              Website
+            </Link>
+
+            <button
+              onClick={logout}
+              className="rounded-lg border border-red-500 px-4 py-2 text-sm text-red-400 hover:bg-red-500 hover:text-white"
+            >
+              Logout
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* HERO */}
-      <section className="min-h-[650px] bg-black px-8 py-24">
-        <div className="mx-auto max-w-7xl">
+      <div className="mx-auto max-w-7xl px-6 py-10">
+        {/* MESSAGES */}
+        {message && (
+          <div className="mb-6 rounded-xl border border-green-500/30 bg-green-500/10 p-4 text-green-400">
+            {message}
+          </div>
+        )}
 
-          <p className="uppercase tracking-[0.4em] text-yellow-500">
-            AP Jewellery Works
-          </p>
+        {error && (
+          <div className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-red-400">
+            {error}
+          </div>
+        )}
 
-          <h2 className="mt-6 text-6xl font-bold md:text-8xl">
-            Jewellery
-            <span className="block text-yellow-400">
-              Beyond Elegance.
-            </span>
+        {/* GOLD RATES */}
+        <section className="mb-10 rounded-2xl border border-yellow-700/30 bg-zinc-950 p-6">
+          <h2 className="mb-6 text-2xl font-bold text-yellow-400">
+            💰 Gold Rates
           </h2>
 
-          <p className="mt-8 max-w-2xl text-xl text-gray-400">
-            Discover beautiful gold jewellery crafted with elegance,
-            tradition and timeless design.
-          </p>
+          <form
+            onSubmit={updateGoldRates}
+            className="grid gap-5 md:grid-cols-3"
+          >
+            <div>
+              <label className="mb-2 block text-sm text-gray-400">
+                22K Rate / 10g
+              </label>
 
-          <div className="mt-10 flex gap-4">
+              <input
+                type="number"
+                value={rate22k}
+                onChange={(e) => setRate22k(e.target.value)}
+                placeholder="Example: 105000"
+                required
+                className="w-full rounded-lg border border-zinc-700 bg-black px-4 py-3 outline-none focus:border-yellow-500"
+              />
+            </div>
 
-            <a
-              href="https://wa.me/919908302023"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-xl bg-yellow-500 px-7 py-4 font-bold text-black"
+            <div>
+              <label className="mb-2 block text-sm text-gray-400">
+                24K Rate / 10g
+              </label>
+
+              <input
+                type="number"
+                value={rate24k}
+                onChange={(e) => setRate24k(e.target.value)}
+                placeholder="Example: 114000"
+                required
+                className="w-full rounded-lg border border-zinc-700 bg-black px-4 py-3 outline-none focus:border-yellow-500"
+              />
+            </div>
+
+            <div className="flex items-end">
+              <button
+                type="submit"
+                disabled={savingRates}
+                className="w-full rounded-lg bg-yellow-500 px-5 py-3 font-bold text-black hover:bg-yellow-400 disabled:opacity-50"
+              >
+                {savingRates
+                  ? "Updating..."
+                  : "Update Gold Rates"}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        {/* ADD JEWELLERY */}
+        <section className="mb-10 rounded-2xl border border-yellow-700/30 bg-zinc-950 p-6">
+          <h2 className="mb-6 text-2xl font-bold text-yellow-400">
+            💎 Add Jewellery
+          </h2>
+
+          <form onSubmit={addJewellery} className="space-y-5">
+            <div className="grid gap-5 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm text-gray-400">
+                  Jewellery Name
+                </label>
+
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Example: Gold Necklace"
+                  required
+                  className="w-full rounded-lg border border-zinc-700 bg-black px-4 py-3 outline-none focus:border-yellow-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm text-gray-400">
+                  Category
+                </label>
+
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-700 bg-black px-4 py-3 outline-none focus:border-yellow-500"
+                >
+                  <option>Necklaces</option>
+                  <option>Chains</option>
+                  <option>Rings</option>
+                  <option>Bangles</option>
+                  <option>Earrings</option>
+                  <option>Bracelets</option>
+                  <option>Pendants</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm text-gray-400">
+                Description
+              </label>
+
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Describe the jewellery..."
+                rows={4}
+                className="w-full rounded-lg border border-zinc-700 bg-black px-4 py-3 outline-none focus:border-yellow-500"
+              />
+            </div>
+
+            <div className="grid gap-5 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm text-gray-400">
+                  Purity
+                </label>
+
+                <select
+                  value={purity}
+                  onChange={(e) => setPurity(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-700 bg-black px-4 py-3 outline-none focus:border-yellow-500"
+                >
+                  <option>22K</option>
+                  <option>24K</option>
+                  <option>18K</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm text-gray-400">
+                  Weight (grams)
+                </label>
+
+                <input
+                  type="number"
+                  step="0.01"
+                  value={weight}
+                  onChange={(e) => setWeight(e.target.value)}
+                  placeholder="Example: 25.50"
+                  className="w-full rounded-lg border border-zinc-700 bg-black px-4 py-3 outline-none focus:border-yellow-500"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm text-gray-400">
+                Jewellery Image
+              </label>
+
+              <input
+                id="jewellery-image"
+                type="file"
+                accept="image/*"
+                onChange={(e) =>
+                  setImage(e.target.files?.[0] || null)
+                }
+                className="w-full rounded-lg border border-zinc-700 bg-black px-4 py-3 text-sm text-gray-300"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={adding}
+              className="rounded-lg bg-yellow-500 px-7 py-3 font-bold text-black hover:bg-yellow-400 disabled:opacity-50"
             >
-              WhatsApp Us
-            </a>
+              {adding ? "Adding..." : "Add Jewellery"}
+            </button>
+          </form>
+        </section>
 
-            <a
-              href="tel:9908302023"
-              className="rounded-xl border border-yellow-700 px-7 py-4 font-bold text-yellow-400"
-            >
-              Call Now
-            </a>
-
-          </div>
-
-        </div>
-      </section>
-
-      {/* JEWELLERY COLLECTION */}
-      <section
-        id="collection"
-        className="border-t border-yellow-900/40 bg-zinc-950 px-8 py-24"
-      >
-
-        <div className="mx-auto max-w-7xl">
-
-          <div className="text-center">
-
-            <p className="uppercase tracking-[0.4em] text-yellow-500">
-              Our Collection
-            </p>
-
-            <h2 className="mt-5 text-5xl font-bold text-white">
-              Jewellery Collection
+        {/* JEWELLERY LIST */}
+        <section className="rounded-2xl border border-yellow-700/30 bg-zinc-950 p-6">
+          <div className="mb-6 flex items-center justify-between">
+            <h2 className="text-2xl font-bold text-yellow-400">
+              📦 Jewellery Collection
             </h2>
 
-            <p className="mx-auto mt-5 max-w-2xl text-gray-500">
-              Explore our beautiful collection of gold jewellery.
-            </p>
-
+            <span className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-gray-400">
+              {jewellery.length} Items
+            </span>
           </div>
 
-          <div className="mt-14 grid gap-8 md:grid-cols-3">
-
-            {/* RING */}
-            <div className="rounded-3xl border border-yellow-900/40 bg-black p-6">
-
-              <div className="flex h-72 items-center justify-center rounded-2xl bg-zinc-900 text-8xl">
-                💍
-              </div>
-
-              <h3 className="mt-6 text-2xl font-bold text-yellow-400">
-                Gold Rings
-              </h3>
-
-              <p className="mt-3 text-gray-500">
-                Elegant gold rings for every occasion.
-              </p>
-
-              <button
-                className="mt-6 w-full rounded-xl bg-yellow-500 px-5 py-3 font-bold text-black"
-              >
-                WhatsApp Enquiry
-              </button>
-
+          {jewellery.length === 0 ? (
+            <div className="py-16 text-center text-gray-500">
+              No jewellery added yet.
             </div>
+          ) : (
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              {jewellery.map((item) => (
+                <div
+                  key={item.id}
+                  className="overflow-hidden rounded-2xl border border-zinc-800 bg-black"
+                >
+                  <div className="aspect-square bg-zinc-900">
+                    {item.image_url ? (
+                      <img
+                        src={item.image_url}
+                        alt={item.name}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-7xl">
+                        💍
+                      </div>
+                    )}
+                  </div>
 
-            {/* CHAIN */}
-            <div className="rounded-3xl border border-yellow-900/40 bg-black p-6">
+                  <div className="p-5">
+                    <p className="text-xs uppercase text-yellow-500">
+                      {item.category}
+                    </p>
 
-              <div className="flex h-72 items-center justify-center rounded-2xl bg-zinc-900 text-8xl">
-                📿
-              </div>
+                    <h3 className="mt-2 text-xl font-bold">
+                      {item.name}
+                    </h3>
 
-              <h3 className="mt-6 text-2xl font-bold text-yellow-400">
-                Gold Chains
-              </h3>
+                    <div className="mt-3 text-sm text-gray-400">
+                      {item.purity && (
+                        <p>Purity: {item.purity}</p>
+                      )}
 
-              <p className="mt-3 text-gray-500">
-                Beautiful traditional and modern gold chains.
-              </p>
+                      {item.weight !== null && (
+                        <p>Weight: {item.weight} g</p>
+                      )}
+                    </div>
 
-              <button
-                className="mt-6 w-full rounded-xl bg-yellow-500 px-5 py-3 font-bold text-black"
-              >
-                WhatsApp Enquiry
-              </button>
+                    {item.description && (
+                      <p className="mt-3 text-sm text-gray-500">
+                        {item.description}
+                      </p>
+                    )}
 
+                    <button
+                      onClick={() =>
+                        deleteJewellery(item.id)
+                      }
+                      className="mt-5 w-full rounded-lg border border-red-500 px-4 py-2 text-red-400 hover:bg-red-500 hover:text-white"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
-
-            {/* BANGLES */}
-            <div className="rounded-3xl border border-yellow-900/40 bg-black p-6">
-
-              <div className="flex h-72 items-center justify-center rounded-2xl bg-zinc-900 text-8xl">
-                💎
-              </div>
-
-              <h3 className="mt-6 text-2xl font-bold text-yellow-400">
-                Gold Bangles
-              </h3>
-
-              <p className="mt-3 text-gray-500">
-                Premium traditional and modern bangle designs.
-              </p>
-
-              <button
-                className="mt-6 w-full rounded-xl bg-yellow-500 px-5 py-3 font-bold text-black"
-              >
-                WhatsApp Enquiry
-              </button>
-
-            </div>
-
-          </div>
-
-        </div>
-
-      </section>
-
-      {/* ABOUT */}
-      <section className="bg-black px-8 py-24">
-
-        <div className="mx-auto max-w-7xl">
-
-          <p className="uppercase tracking-[0.4em] text-yellow-500">
-            About Us
-          </p>
-
-          <h2 className="mt-5 text-5xl font-bold">
-            AP Jewellery Works
-          </h2>
-
-          <p className="mt-6 max-w-3xl text-lg leading-8 text-gray-400">
-            Quality jewellery, trusted service and beautiful designs
-            made for every special occasion.
-          </p>
-
-        </div>
-
-      </section>
-
-      {/* FOOTER */}
-      <footer className="border-t border-yellow-900/30 bg-black px-8 py-12">
-
-        <div className="mx-auto max-w-7xl">
-
-          <h3 className="text-2xl font-bold text-yellow-400">
-            AP Jewellery Works
-          </h3>
-
-          <p className="mt-3 text-gray-500">
-            Owner: Appalacharyulu
-          </p>
-
-          <p className="mt-2 text-gray-500">
-            Prakasham Chowk, Kalki Bazar, Bhimavaram
-          </p>
-
-          <p className="mt-2 text-gray-500">
-            📞 9908302023
-          </p>
-
-        </div>
-
-      </footer>
-
+          )}
+        </section>
+      </div>
     </main>
   );
 }
