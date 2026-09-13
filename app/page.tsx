@@ -4,20 +4,22 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
-type GoldRates = {
-  rate22k: number;
-  rate24k: number;
-  updatedAt: string;
-};
-
 type Jewellery = {
-  id: string | number;
+  id: number | string;
   name: string;
   category: string;
-  description: string;
-  purity: string;
-  weight: number | string | null;
+  description: string | null;
+  purity: string | null;
+  weight: string | null;
   image_url: string | null;
+  created_at: string;
+};
+
+type GoldRate = {
+  id: number | string;
+  rate_22k: number;
+  rate_24k: number;
+  updated_at: string;
 };
 
 const categories = [
@@ -32,134 +34,71 @@ const categories = [
 ];
 
 export default function HomePage() {
-  const [goldRates, setGoldRates] = useState<GoldRates>({
-    rate22k: 0,
-    rate24k: 0,
-    updatedAt: "",
-  });
-
   const [jewellery, setJewellery] = useState<Jewellery[]>([]);
-  const [selectedCategory, setSelectedCategory] =
-    useState("All");
-
+  const [goldRate, setGoldRate] = useState<GoldRate | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState("All");
   const [search, setSearch] = useState("");
-  const [loadingRates, setLoadingRates] = useState(true);
-  const [loadingJewellery, setLoadingJewellery] =
-    useState(true);
+  const [loading, setLoading] = useState(true);
 
-  const [errorMessage, setErrorMessage] = useState("");
+  // PHOTO VIEWER
+  const [selectedPhoto, setSelectedPhoto] =
+    useState<Jewellery | null>(null);
 
-  // ---------------------------------------------------------
-  // LOAD GOLD RATES
-  // ---------------------------------------------------------
-
-  async function loadGoldRates() {
-    setLoadingRates(true);
-
-    try {
-      const { data, error } = await supabase
-        .from("gold_rates")
-        .select(
-          "id, rate_22k, rate_24k, updated_at"
-        )
-        .order("updated_at", {
-          ascending: false,
-        })
-        .limit(1)
-        .maybeSingle();
-
-      if (error) {
-        console.error(
-          "Gold rate loading error:",
-          error
-        );
-
-        setErrorMessage(
-          "Unable to load latest gold rates."
-        );
-
-        return;
-      }
-
-      if (!data) {
-        console.log(
-          "No gold rate record found."
-        );
-
-        return;
-      }
-
-      console.log(
-        "LATEST GOLD RATE FROM SUPABASE:",
-        data
-      );
-
-      setGoldRates({
-        rate22k: Number(data.rate_22k),
-        rate24k: Number(data.rate_24k),
-        updatedAt: data.updated_at,
-      });
-    } catch (error) {
-      console.error(
-        "Unexpected gold rate error:",
-        error
-      );
-    } finally {
-      setLoadingRates(false);
-    }
-  }
-
-  // ---------------------------------------------------------
-  // LOAD JEWELLERY
-  // ---------------------------------------------------------
-
-  async function loadJewellery() {
-    setLoadingJewellery(true);
-
-    try {
-      const { data, error } = await supabase
-        .from("jewellery")
-        .select(
-          "id, name, category, description, purity, weight, image_url"
-        )
-        .order("created_at", {
-          ascending: false,
-        });
-
-      if (error) {
-        console.error(
-          "Jewellery loading error:",
-          error
-        );
-
-        return;
-      }
-
-      setJewellery(
-        (data ?? []) as Jewellery[]
-      );
-    } catch (error) {
-      console.error(
-        "Unexpected jewellery error:",
-        error
-      );
-    } finally {
-      setLoadingJewellery(false);
-    }
-  }
-
-  // ---------------------------------------------------------
-  // INITIAL LOAD
-  // ---------------------------------------------------------
+  const [zoom, setZoom] = useState(1);
 
   useEffect(() => {
-    loadGoldRates();
-    loadJewellery();
+    loadData();
   }, []);
 
-  // ---------------------------------------------------------
-  // FILTER JEWELLERY
-  // ---------------------------------------------------------
+  // Prevent website scrolling while photo viewer is open
+  useEffect(() => {
+    if (selectedPhoto) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [selectedPhoto]);
+
+  async function loadData() {
+    setLoading(true);
+
+    const jewelleryResult = await supabase
+      .from("jewellery")
+      .select(
+        "id, name, category, description, purity, weight, image_url, created_at"
+      )
+      .order("created_at", { ascending: false });
+
+    if (jewelleryResult.error) {
+      console.error(
+        "Jewellery load error:",
+        jewelleryResult.error
+      );
+    } else {
+      setJewellery(jewelleryResult.data || []);
+    }
+
+    const goldResult = await supabase
+      .from("gold_rates")
+      .select("id, rate_22k, rate_24k, updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (goldResult.error) {
+      console.error(
+        "Gold rate load error:",
+        goldResult.error
+      );
+    } else {
+      setGoldRate(goldResult.data?.[0] || null);
+    }
+
+    setLoading(false);
+  }
 
   const filteredJewellery = useMemo(() => {
     return jewellery.filter((item) => {
@@ -169,100 +108,201 @@ export default function HomePage() {
           selectedCategory.toLowerCase();
 
       const searchMatch =
-        search.trim() === "" ||
         item.name
-          ?.toLowerCase()
+          .toLowerCase()
+          .includes(search.toLowerCase()) ||
+        item.category
+          .toLowerCase()
           .includes(search.toLowerCase());
 
       return categoryMatch && searchMatch;
     });
-  }, [
-    jewellery,
-    selectedCategory,
-    search,
-  ]);
+  }, [jewellery, selectedCategory, search]);
 
-  // ---------------------------------------------------------
-  // FORMAT RATE
-  // ---------------------------------------------------------
-
-  function formatRate(rate: number) {
-    if (!rate || Number.isNaN(rate)) {
-      return "₹--";
+  function formatRate(
+    value: number | null | undefined
+  ) {
+    if (value === null || value === undefined) {
+      return "₹0";
     }
 
-    return `₹${rate.toLocaleString("en-IN")}`;
+    return `₹${Number(value).toLocaleString("en-IN")}`;
   }
 
-  // ---------------------------------------------------------
-  // WHATSAPP
-  // ---------------------------------------------------------
+  function openPhoto(item: Jewellery) {
+    if (!item.image_url) return;
 
-  function whatsappEnquiry(
-    productName: string
-  ) {
-    const message = encodeURIComponent(
-      `Hello AP Jewellery Works, I am interested in ${productName}.`
-    );
-
-    window.open(
-      `https://wa.me/919908302023?text=${message}`,
-      "_blank"
-    );
+    setSelectedPhoto(item);
+    setZoom(1);
   }
 
-  // ---------------------------------------------------------
-  // SHARE
-  // ---------------------------------------------------------
+  function closePhoto() {
+    setSelectedPhoto(null);
+    setZoom(1);
+  }
 
-  async function shareProduct(
-    product: Jewellery
-  ) {
-    const text = `${product.name} - AP Jewellery Works`;
+  function nextPhoto() {
+    if (!selectedPhoto) return;
+
+    const currentIndex = filteredJewellery.findIndex(
+      (item) => item.id === selectedPhoto.id
+    );
+
+    const nextIndex =
+      (currentIndex + 1) %
+      filteredJewellery.length;
+
+    const nextItem = filteredJewellery[nextIndex];
+
+    if (nextItem?.image_url) {
+      setSelectedPhoto(nextItem);
+      setZoom(1);
+    }
+  }
+
+  function previousPhoto() {
+    if (!selectedPhoto) return;
+
+    const currentIndex = filteredJewellery.findIndex(
+      (item) => item.id === selectedPhoto.id
+    );
+
+    const previousIndex =
+      (currentIndex - 1 + filteredJewellery.length) %
+      filteredJewellery.length;
+
+    const previousItem =
+      filteredJewellery[previousIndex];
+
+    if (previousItem?.image_url) {
+      setSelectedPhoto(previousItem);
+      setZoom(1);
+    }
+  }
+
+  function whatsappEnquiry(item: Jewellery) {
+    const message =
+      `Hello AP Jewellery Works, I am interested in ${item.name}. ` +
+      `Please share more details.`;
+
+    const url =
+      `https://wa.me/919908302023?text=` +
+      encodeURIComponent(message);
+
+    window.open(url, "_blank");
+  }
+
+  async function shareProduct(item: Jewellery) {
+    const shareData = {
+      title: item.name,
+      text:
+        `Check this jewellery from AP Jewellery Works: ` +
+        item.name,
+      url: item.image_url || window.location.href,
+    };
 
     try {
-      if (
-        typeof navigator !== "undefined" &&
-        navigator.share
-      ) {
-        await navigator.share({
-          title: product.name,
-          text,
-          url: window.location.href,
-        });
+      if (navigator.share) {
+        await navigator.share(shareData);
       } else {
         await navigator.clipboard.writeText(
-          window.location.href
+          item.image_url || window.location.href
         );
 
-        alert(
-          "Product link copied!"
-        );
+        alert("Link copied!");
       }
     } catch {
-      console.log("Share cancelled");
+      // User cancelled sharing
     }
   }
 
-  // ---------------------------------------------------------
-  // REFRESH
-  // ---------------------------------------------------------
+  async function downloadPhoto(item: Jewellery) {
+    if (!item.image_url) return;
 
-  async function refreshData() {
-    await Promise.all([
-      loadGoldRates(),
-      loadJewellery(),
-    ]);
+    try {
+      const response = await fetch(item.image_url);
+
+      if (!response.ok) {
+        throw new Error("Image could not be downloaded");
+      }
+
+      const blob = await response.blob();
+
+      const blobUrl = window.URL.createObjectURL(blob);
+
+      const link = document.createElement("a");
+
+      link.href = blobUrl;
+
+      const safeName = item.name
+        .replace(/[^a-z0-9]/gi, "-")
+        .toLowerCase();
+
+      link.download = `${safeName}.jpg`;
+
+      document.body.appendChild(link);
+
+      link.click();
+
+      document.body.removeChild(link);
+
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      console.error("Download error:", error);
+
+      // Fallback
+      window.open(item.image_url, "_blank");
+    }
   }
+
+  // Keyboard controls
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (!selectedPhoto) return;
+
+      if (e.key === "Escape") {
+        closePhoto();
+      }
+
+      if (e.key === "ArrowRight") {
+        nextPhoto();
+      }
+
+      if (e.key === "ArrowLeft") {
+        previousPhoto();
+      }
+
+      if (e.key === "+") {
+        setZoom((value) =>
+          Math.min(value + 0.25, 3)
+        );
+      }
+
+      if (e.key === "-") {
+        setZoom((value) =>
+          Math.max(value - 0.25, 1)
+        );
+      }
+    }
+
+    window.addEventListener(
+      "keydown",
+      handleKeyDown
+    );
+
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleKeyDown
+      );
+    };
+  });
 
   return (
     <main className="min-h-screen bg-black text-white">
 
-      {/* =====================================================
-          HEADER
-      ====================================================== */}
-
-      <header className="sticky top-0 z-50 border-b border-yellow-700/30 bg-black/95 backdrop-blur">
+      {/* HEADER */}
+      <header className="sticky top-0 z-50 border-b border-yellow-500/20 bg-black/95 backdrop-blur">
 
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
 
@@ -270,77 +310,93 @@ export default function HomePage() {
             href="/"
             className="flex items-center gap-3"
           >
-            <div className="flex h-11 w-11 items-center justify-center rounded-full border border-yellow-500 bg-black text-xl font-bold text-yellow-400">
-              AP
+
+            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-yellow-500">
+
+              <span className="font-serif text-lg font-bold text-yellow-400">
+                AP
+              </span>
+
             </div>
 
             <div>
-              <div className="font-serif text-lg font-bold tracking-wide text-yellow-400">
+
+              <h1 className="font-serif text-lg font-bold tracking-widest text-yellow-400">
                 AP JEWELLERY
-              </div>
+              </h1>
 
-              <div className="text-xs tracking-[0.25em] text-white/50">
+              <p className="text-[10px] tracking-[0.3em] text-zinc-500">
                 WORKS
-              </div>
+              </p>
+
             </div>
+
           </Link>
 
-          <Link
-            href="/admin/login"
-            className="rounded-full border border-yellow-500 px-5 py-2 text-sm font-semibold text-yellow-400 transition hover:bg-yellow-500 hover:text-black"
-          >
-            Admin
-          </Link>
+          <div className="flex items-center gap-3">
+
+            <a
+              href="#collection"
+              className="hidden rounded-full border border-yellow-500/40 px-4 py-2 text-sm text-yellow-400 hover:bg-yellow-500 hover:text-black sm:block"
+            >
+              Collection
+            </a>
+
+            <Link
+              href="/admin/login"
+              className="rounded-full bg-yellow-500 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-400"
+            >
+              Admin
+            </Link>
+
+          </div>
 
         </div>
 
       </header>
 
-      {/* =====================================================
-          HERO
-      ====================================================== */}
 
-      <section className="relative overflow-hidden border-b border-yellow-700/20">
+      {/* HERO */}
+      <section className="relative overflow-hidden border-b border-yellow-500/10">
 
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(212,175,55,0.14),transparent_55%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(212,175,55,0.18),transparent_55%)]" />
 
-        <div className="relative mx-auto max-w-7xl px-5 py-24 text-center">
+        <div className="relative mx-auto max-w-7xl px-5 py-24 text-center md:py-32">
 
-          <div className="mx-auto mb-8 flex h-32 w-32 items-center justify-center rounded-full border-2 border-yellow-500 shadow-[0_0_50px_rgba(212,175,55,0.25)]">
-
-            <div className="text-5xl font-serif font-bold text-yellow-400">
-              AP
-            </div>
-
-          </div>
-
-          <p className="mb-3 text-sm uppercase tracking-[0.35em] text-yellow-500">
-            Since Excellence
+          <p className="mb-5 text-sm tracking-[0.45em] text-yellow-400">
+            AP JEWELLERY WORKS
           </p>
 
-          <h1 className="font-serif text-4xl font-bold md:text-6xl">
-            AP Jewellery Works
-          </h1>
+          <h2 className="font-serif text-5xl font-bold leading-tight md:text-7xl">
+            Timeless Jewellery
+            <br />
 
-          <p className="mx-auto mt-5 max-w-2xl text-white/60">
-            Discover timeless gold jewellery crafted
-            with elegance, tradition and perfection.
+            <span className="text-yellow-400">
+              Crafted With Trust
+            </span>
+          </h2>
+
+          <p className="mx-auto mt-6 max-w-2xl text-zinc-400">
+            Discover beautifully crafted gold jewellery
+            from AP Jewellery Works, Bhimavaram.
           </p>
 
           <div className="mt-8 flex flex-wrap justify-center gap-4">
 
             <a
               href="#collection"
-              className="rounded-full bg-yellow-500 px-7 py-3 font-semibold text-black transition hover:bg-yellow-400"
+              className="rounded-full bg-yellow-500 px-7 py-3 font-semibold text-black hover:bg-yellow-400"
             >
               Explore Collection
             </a>
 
             <a
-              href="tel:9908302023"
-              className="rounded-full border border-yellow-500 px-7 py-3 font-semibold text-yellow-400 transition hover:bg-yellow-500 hover:text-black"
+              href="https://wa.me/919908302023"
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-full border border-yellow-500 px-7 py-3 font-semibold text-yellow-400 hover:bg-yellow-500 hover:text-black"
             >
-              Call Now
+              WhatsApp Us
             </a>
 
           </div>
@@ -349,410 +405,348 @@ export default function HomePage() {
 
       </section>
 
-      {/* =====================================================
-          GOLD RATES
-      ====================================================== */}
 
-      <section className="mx-auto max-w-7xl px-5 py-16">
+      {/* GOLD RATE */}
+      <section className="mx-auto max-w-7xl px-5 py-12">
 
-        <div className="mb-8 text-center">
+        <div className="rounded-3xl border border-yellow-500/20 bg-zinc-950 p-6 md:p-8">
 
-          <p className="text-sm uppercase tracking-[0.3em] text-yellow-500">
-            Live Market Update
-          </p>
+          <div className="mb-7">
 
-          <h2 className="mt-2 font-serif text-3xl font-bold md:text-4xl">
-            Today&apos;s Gold Rates
-          </h2>
+            <p className="text-sm tracking-[0.3em] text-yellow-400">
+              TODAY'S GOLD RATE
+            </p>
 
-        </div>
+            <h2 className="mt-2 font-serif text-3xl font-bold">
+              Current Gold Prices
+            </h2>
 
-        <div className="grid gap-5 md:grid-cols-2">
+          </div>
 
-          {/* 22K */}
+          <div className="grid gap-4 md:grid-cols-2">
 
-          <div className="rounded-3xl border border-yellow-700/40 bg-gradient-to-br from-yellow-500/10 to-transparent p-8">
+            <div className="rounded-2xl border border-yellow-500/20 bg-black p-6">
 
-            <div className="flex items-center justify-between">
+              <p className="text-sm text-zinc-500">
+                22K Gold / 8g
+              </p>
 
-              <div>
-                <p className="text-sm uppercase tracking-widest text-yellow-500">
-                  Gold
-                </p>
-
-                <h3 className="mt-1 text-3xl font-bold">
-                  22K
-                </h3>
-              </div>
-
-              <div className="text-4xl">
-                🪙
-              </div>
+              <p className="mt-2 text-4xl font-bold text-yellow-400">
+                {formatRate(
+                  goldRate?.rate_22k
+                )}
+              </p>
 
             </div>
 
-            <div className="mt-8">
+            <div className="rounded-2xl border border-yellow-500/20 bg-black p-6">
 
-              {loadingRates ? (
-                <div className="animate-pulse text-4xl font-bold text-white/30">
-                  Loading...
-                </div>
-              ) : (
-                <div className="text-4xl font-bold text-yellow-400">
-                  {formatRate(
-                    goldRates.rate22k
-                  )}
-                </div>
-              )}
+              <p className="text-sm text-zinc-500">
+                24K Gold / 8g
+              </p>
 
-              <p className="mt-2 text-sm text-white/40">
-                Per 10 grams
+              <p className="mt-2 text-4xl font-bold text-yellow-400">
+                {formatRate(
+                  goldRate?.rate_24k
+                )}
               </p>
 
             </div>
 
           </div>
-
-          {/* 24K */}
-
-          <div className="rounded-3xl border border-yellow-700/40 bg-gradient-to-br from-yellow-500/10 to-transparent p-8">
-
-            <div className="flex items-center justify-between">
-
-              <div>
-                <p className="text-sm uppercase tracking-widest text-yellow-500">
-                  Gold
-                </p>
-
-                <h3 className="mt-1 text-3xl font-bold">
-                  24K
-                </h3>
-              </div>
-
-              <div className="text-4xl">
-                💎
-              </div>
-
-            </div>
-
-            <div className="mt-8">
-
-              {loadingRates ? (
-                <div className="animate-pulse text-4xl font-bold text-white/30">
-                  Loading...
-                </div>
-              ) : (
-                <div className="text-4xl font-bold text-yellow-400">
-                  {formatRate(
-                    goldRates.rate24k
-                  )}
-                </div>
-              )}
-
-              <p className="mt-2 text-sm text-white/40">
-                Per 10 grams
-              </p>
-
-            </div>
-
-          </div>
-
-        </div>
-
-        {/* UPDATED TIME */}
-
-        {goldRates.updatedAt && (
-          <div className="mt-5 text-center text-xs text-white/40">
-            Last updated:{" "}
-            {new Date(
-              goldRates.updatedAt
-            ).toLocaleString("en-IN")}
-          </div>
-        )}
-
-        {errorMessage && (
-          <div className="mt-4 text-center text-sm text-red-400">
-            {errorMessage}
-          </div>
-        )}
-
-        <div className="mt-5 text-center">
-
-          <button
-            onClick={refreshData}
-            className="rounded-full border border-yellow-700 px-5 py-2 text-sm text-yellow-400 transition hover:bg-yellow-500 hover:text-black"
-          >
-            ↻ Refresh Rates
-          </button>
 
         </div>
 
       </section>
 
-      {/* =====================================================
-          COLLECTION
-      ====================================================== */}
 
+      {/* COLLECTION */}
       <section
         id="collection"
-        className="border-t border-yellow-700/20 bg-[#070707] px-5 py-16"
+        className="mx-auto max-w-7xl px-5 py-16"
       >
 
-        <div className="mx-auto max-w-7xl">
+        <div className="mb-10 text-center">
 
-          <div className="text-center">
+          <p className="text-sm tracking-[0.35em] text-yellow-400">
+            OUR COLLECTION
+          </p>
 
-            <p className="text-sm uppercase tracking-[0.3em] text-yellow-500">
-              Our Collection
+          <h2 className="mt-3 font-serif text-4xl font-bold md:text-5xl">
+            Jewellery Collection
+          </h2>
+
+        </div>
+
+
+        {/* SEARCH */}
+        <div className="mb-6">
+
+          <input
+            type="text"
+            placeholder="Search jewellery..."
+            value={search}
+            onChange={(e) =>
+              setSearch(e.target.value)
+            }
+            className="w-full rounded-full border border-yellow-500/20 bg-zinc-950 px-5 py-3 text-white outline-none placeholder:text-zinc-600 focus:border-yellow-500 md:max-w-md"
+          />
+
+        </div>
+
+
+        {/* CATEGORIES */}
+        <div className="mb-10 flex gap-2 overflow-x-auto pb-2">
+
+          {categories.map((category) => (
+
+            <button
+              key={category}
+              onClick={() =>
+                setSelectedCategory(category)
+              }
+              className={`whitespace-nowrap rounded-full px-5 py-2 text-sm transition ${
+                selectedCategory === category
+                  ? "bg-yellow-500 font-semibold text-black"
+                  : "border border-yellow-500/20 bg-zinc-950 text-zinc-400 hover:border-yellow-500 hover:text-yellow-400"
+              }`}
+            >
+              {category}
+            </button>
+
+          ))}
+
+        </div>
+
+
+        {/* LOADING */}
+        {loading && (
+
+          <div className="py-20 text-center">
+
+            <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-yellow-500 border-t-transparent" />
+
+            <p className="mt-4 text-zinc-500">
+              Loading jewellery...
             </p>
 
-            <h2 className="mt-2 font-serif text-3xl font-bold md:text-4xl">
-              Premium Jewellery
-            </h2>
-
           </div>
 
-          {/* SEARCH */}
+        )}
 
-          <div className="mx-auto mt-10 max-w-xl">
 
-            <input
-              value={search}
-              onChange={(e) =>
-                setSearch(e.target.value)
-              }
-              placeholder="Search jewellery..."
-              className="w-full rounded-full border border-yellow-700/40 bg-black px-6 py-4 text-white outline-none placeholder:text-white/30 focus:border-yellow-500"
-            />
+        {/* NO PRODUCTS */}
+        {!loading &&
+          filteredJewellery.length === 0 && (
 
-          </div>
+            <div className="rounded-3xl border border-yellow-500/10 bg-zinc-950 py-20 text-center">
 
-          {/* CATEGORIES */}
-
-          <div className="mt-7 flex gap-3 overflow-x-auto pb-3">
-
-            {categories.map(
-              (category) => (
-                <button
-                  key={category}
-                  onClick={() =>
-                    setSelectedCategory(
-                      category
-                    )
-                  }
-                  className={`whitespace-nowrap rounded-full border px-5 py-2 text-sm font-medium transition ${
-                    selectedCategory ===
-                    category
-                      ? "border-yellow-500 bg-yellow-500 text-black"
-                      : "border-yellow-700/40 text-yellow-400 hover:bg-yellow-500 hover:text-black"
-                  }`}
-                >
-                  {category}
-                </button>
-              )
-            )}
-
-          </div>
-
-          {/* PRODUCTS */}
-
-          {loadingJewellery ? (
-
-            <div className="py-20 text-center text-white/50">
-              Loading jewellery...
-            </div>
-
-          ) : filteredJewellery.length ===
-            0 ? (
-
-            <div className="py-20 text-center">
-
-              <div className="text-6xl">
+              <div className="text-7xl">
                 💍
               </div>
 
-              <p className="mt-4 text-white/50">
-                No jewellery found.
+              <p className="mt-5 text-zinc-400">
+                No jewellery available.
               </p>
-
-            </div>
-
-          ) : (
-
-            <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-
-              {filteredJewellery.map(
-                (product) => (
-
-                  <article
-                    key={product.id}
-                    className="group overflow-hidden rounded-3xl border border-yellow-700/30 bg-black transition duration-300 hover:-translate-y-1 hover:border-yellow-500 hover:shadow-[0_15px_50px_rgba(212,175,55,0.12)]"
-                  >
-
-                    {/* IMAGE */}
-
-                    <div className="relative aspect-square overflow-hidden bg-[#111]">
-
-                      {product.image_url ? (
-
-                        <img
-                          src={product.image_url}
-                          alt={product.name}
-                          className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-                        />
-
-                      ) : (
-
-                        <div className="flex h-full items-center justify-center text-7xl">
-                          💍
-                        </div>
-
-                      )}
-
-                    </div>
-
-                    {/* DETAILS */}
-
-                    <div className="p-5">
-
-                      <div className="flex items-start justify-between gap-3">
-
-                        <div>
-
-                          <h3 className="font-serif text-xl font-bold text-yellow-400">
-                            {product.name}
-                          </h3>
-
-                          <p className="mt-1 text-xs uppercase tracking-wider text-white/40">
-                            {product.category}
-                          </p>
-
-                        </div>
-
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-
-                        <div className="rounded-xl bg-white/5 p-3">
-
-                          <p className="text-xs text-white/40">
-                            Purity
-                          </p>
-
-                          <p className="mt-1 font-semibold text-white">
-                            {product.purity ||
-                              "—"}
-                          </p>
-
-                        </div>
-
-                        <div className="rounded-xl bg-white/5 p-3">
-
-                          <p className="text-xs text-white/40">
-                            Weight
-                          </p>
-
-                          <p className="mt-1 font-semibold text-white">
-                            {product.weight
-                              ? `${product.weight} g`
-                              : "—"}
-                          </p>
-
-                        </div>
-
-                      </div>
-
-                      {product.description && (
-                        <p className="mt-4 line-clamp-2 text-sm text-white/50">
-                          {product.description}
-                        </p>
-                      )}
-
-                      {/* ACTIONS */}
-
-                      <div className="mt-5 grid grid-cols-2 gap-2">
-
-                        <button
-                          onClick={() =>
-                            whatsappEnquiry(
-                              product.name
-                            )
-                          }
-                          className="rounded-xl bg-yellow-500 px-3 py-3 text-sm font-bold text-black transition hover:bg-yellow-400"
-                        >
-                          WhatsApp
-                        </button>
-
-                        <button
-                          onClick={() =>
-                            shareProduct(
-                              product
-                            )
-                          }
-                          className="rounded-xl border border-yellow-700/50 px-3 py-3 text-sm font-semibold text-yellow-400 transition hover:bg-yellow-500 hover:text-black"
-                        >
-                          Share
-                        </button>
-
-                      </div>
-
-                    </div>
-
-                  </article>
-
-                )
-              )}
 
             </div>
 
           )}
 
-        </div>
+
+        {/* PHOTO GRID */}
+        {!loading &&
+          filteredJewellery.length > 0 && (
+
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+
+              {filteredJewellery.map((item) => (
+
+                <article
+                  key={item.id}
+                  className="group overflow-hidden rounded-3xl border border-yellow-500/10 bg-zinc-950 transition duration-500 hover:-translate-y-2 hover:border-yellow-500/40"
+                >
+
+                  {/* CLICKABLE PHOTO */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openPhoto(item)
+                    }
+                    className="relative block aspect-square w-full cursor-zoom-in overflow-hidden bg-zinc-900 text-left"
+                  >
+
+                    {item.image_url ? (
+
+                      <img
+                        src={item.image_url}
+                        alt={item.name}
+                        className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110"
+                      />
+
+                    ) : (
+
+                      <div className="flex h-full items-center justify-center">
+                        <span className="text-7xl">
+                          💍
+                        </span>
+                      </div>
+
+                    )}
+
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-5 pt-12">
+
+                      <span className="text-xs text-yellow-400">
+                        TAP TO VIEW
+                      </span>
+
+                    </div>
+
+                    <div className="absolute left-4 top-4 rounded-full bg-black/80 px-3 py-1 text-xs text-yellow-400 backdrop-blur">
+                      {item.category}
+                    </div>
+
+                  </button>
+
+
+                  {/* DETAILS */}
+                  <div className="p-5">
+
+                    <h3 className="font-serif text-xl font-semibold">
+                      {item.name}
+                    </h3>
+
+                    {item.description && (
+
+                      <p className="mt-2 line-clamp-2 text-sm text-zinc-500">
+                        {item.description}
+                      </p>
+
+                    )}
+
+                    <div className="mt-4 space-y-1 text-sm">
+
+                      {item.purity && (
+
+                        <p className="text-zinc-500">
+                          Purity:
+                          <span className="ml-2 text-white">
+                            {item.purity}
+                          </span>
+                        </p>
+
+                      )}
+
+                      {item.weight && (
+
+                        <p className="text-zinc-500">
+                          Weight:
+                          <span className="ml-2 text-white">
+                            {item.weight}
+                          </span>
+                        </p>
+
+                      )}
+
+                    </div>
+
+
+                    <div className="mt-5 grid grid-cols-2 gap-2">
+
+                      <button
+                        onClick={() =>
+                          whatsappEnquiry(item)
+                        }
+                        className="rounded-xl bg-yellow-500 px-3 py-2 text-sm font-semibold text-black hover:bg-yellow-400"
+                      >
+                        WhatsApp
+                      </button>
+
+                      <button
+                        onClick={() =>
+                          shareProduct(item)
+                        }
+                        className="rounded-xl border border-yellow-500/30 px-3 py-2 text-sm text-yellow-400 hover:bg-yellow-500 hover:text-black"
+                      >
+                        Share
+                      </button>
+
+                    </div>
+
+                  </div>
+
+                </article>
+
+              ))}
+
+            </div>
+
+          )}
 
       </section>
 
-      {/* =====================================================
-          CONTACT
-      ====================================================== */}
 
-      <section className="border-t border-yellow-700/20 px-5 py-20">
+      {/* CONTACT */}
+      <section
+        id="contact"
+        className="border-t border-yellow-500/10 bg-zinc-950"
+      >
 
-        <div className="mx-auto max-w-3xl text-center">
+        <div className="mx-auto max-w-7xl px-5 py-16">
 
-          <p className="text-sm uppercase tracking-[0.3em] text-yellow-500">
-            Visit Us
-          </p>
+          <div className="grid gap-10 md:grid-cols-2">
 
-          <h2 className="mt-2 font-serif text-3xl font-bold md:text-4xl">
-            AP Jewellery Works
-          </h2>
+            <div>
 
-          <p className="mt-5 text-white/60">
-            Prakasham Chowk, Kalki Bazar,
-            Bhimavaram
-          </p>
+              <p className="text-sm tracking-[0.3em] text-yellow-400">
+                VISIT US
+              </p>
 
-          <p className="mt-2 text-xl font-semibold text-yellow-400">
-            9908302023
-          </p>
+              <h2 className="mt-3 font-serif text-4xl font-bold">
+                AP Jewellery Works
+              </h2>
 
-          <div className="mt-8 flex flex-wrap justify-center gap-4">
+              <p className="mt-5 leading-7 text-zinc-400">
+                Prakasham Chowk,
+                <br />
+                Kalki Bazar,
+                <br />
+                Bhimavaram
+              </p>
 
-            <a
-              href="tel:9908302023"
-              className="rounded-full bg-yellow-500 px-7 py-3 font-bold text-black transition hover:bg-yellow-400"
-            >
-              📞 Call Now
-            </a>
+            </div>
 
-            <a
-              href="https://wa.me/919908302023"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-full border border-yellow-500 px-7 py-3 font-bold text-yellow-400 transition hover:bg-yellow-500 hover:text-black"
-            >
-              💬 WhatsApp
-            </a>
+            <div className="rounded-3xl border border-yellow-500/10 bg-black p-7">
+
+              <p className="text-sm text-zinc-500">
+                Owner
+              </p>
+
+              <p className="mt-1 text-xl font-semibold">
+                Appalacharyulu
+              </p>
+
+              <div className="mt-6 space-y-3">
+
+                <a
+                  href="tel:+919908302023"
+                  className="block rounded-xl border border-yellow-500/20 px-4 py-3 text-yellow-400 hover:bg-yellow-500 hover:text-black"
+                >
+                  📞 Call: 9908302023
+                </a>
+
+                <a
+                  href="https://wa.me/919908302023"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block rounded-xl border border-yellow-500/20 px-4 py-3 text-yellow-400 hover:bg-yellow-500 hover:text-black"
+                >
+                  💬 WhatsApp
+                </a>
+
+              </div>
+
+            </div>
 
           </div>
 
@@ -760,25 +754,217 @@ export default function HomePage() {
 
       </section>
 
-      {/* =====================================================
-          FOOTER
-      ====================================================== */}
 
-      <footer className="border-t border-yellow-700/20 bg-black px-5 py-8 text-center">
+      {/* FOOTER */}
+      <footer className="border-t border-yellow-500/10 px-5 py-8 text-center">
 
-        <p className="font-serif text-lg font-bold text-yellow-400">
+        <p className="font-serif text-yellow-400">
           AP JEWELLERY WORKS
         </p>
 
-        <p className="mt-2 text-sm text-white/30">
-          Luxury • Trust • Tradition
-        </p>
-
-        <p className="mt-4 text-xs text-white/20">
-          © {new Date().getFullYear()} AP Jewellery Works
+        <p className="mt-2 text-xs text-zinc-600">
+          © {new Date().getFullYear()} AP Jewellery Works.
+          All rights reserved.
         </p>
 
       </footer>
+
+
+      {/* ========================================= */}
+      {/* FULL SCREEN PHOTO VIEWER */}
+      {/* ========================================= */}
+
+      {selectedPhoto &&
+        selectedPhoto.image_url && (
+
+          <div
+            className="fixed inset-0 z-[100] flex flex-col bg-black/95 backdrop-blur-md"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                closePhoto();
+              }
+            }}
+          >
+
+            {/* TOP BAR */}
+            <div className="flex items-center justify-between border-b border-yellow-500/20 bg-black/80 px-4 py-4">
+
+              <div>
+
+                <h2 className="font-serif text-lg font-semibold text-white">
+                  {selectedPhoto.name}
+                </h2>
+
+                <p className="text-xs text-yellow-400">
+                  {selectedPhoto.category}
+                </p>
+
+              </div>
+
+              {/* CLOSE */}
+              <button
+                onClick={closePhoto}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-yellow-500/30 text-2xl text-yellow-400 hover:bg-yellow-500 hover:text-black"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+
+            </div>
+
+
+            {/* IMAGE AREA */}
+            <div className="relative flex flex-1 items-center justify-center overflow-hidden px-14 py-6">
+
+              {/* PREVIOUS */}
+              {filteredJewellery.length > 1 && (
+
+                <button
+                  onClick={previousPhoto}
+                  className="absolute left-3 z-10 flex h-12 w-12 items-center justify-center rounded-full border border-yellow-500/30 bg-black/70 text-3xl text-yellow-400 hover:bg-yellow-500 hover:text-black"
+                  aria-label="Previous photo"
+                >
+                  ‹
+                </button>
+
+              )}
+
+
+              {/* IMAGE */}
+              <div className="flex h-full w-full items-center justify-center overflow-auto">
+
+                <img
+                  src={selectedPhoto.image_url}
+                  alt={selectedPhoto.name}
+                  className="max-h-full max-w-full select-none object-contain transition-transform duration-300"
+                  style={{
+                    transform: `scale(${zoom})`,
+                    cursor:
+                      zoom > 1
+                        ? "zoom-out"
+                        : "zoom-in",
+                  }}
+                  onClick={() => {
+                    setZoom((value) =>
+                      value >= 3
+                        ? 1
+                        : value + 0.5
+                    );
+                  }}
+                />
+
+              </div>
+
+
+              {/* NEXT */}
+              {filteredJewellery.length > 1 && (
+
+                <button
+                  onClick={nextPhoto}
+                  className="absolute right-3 z-10 flex h-12 w-12 items-center justify-center rounded-full border border-yellow-500/30 bg-black/70 text-3xl text-yellow-400 hover:bg-yellow-500 hover:text-black"
+                  aria-label="Next photo"
+                >
+                  ›
+                </button>
+
+              )}
+
+            </div>
+
+
+            {/* BOTTOM CONTROLS */}
+            <div className="border-t border-yellow-500/20 bg-black/90 px-4 py-4">
+
+              <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-2">
+
+                {/* ZOOM OUT */}
+                <button
+                  onClick={() =>
+                    setZoom((value) =>
+                      Math.max(
+                        1,
+                        value - 0.25
+                      )
+                    )
+                  }
+                  className="rounded-xl border border-yellow-500/30 px-4 py-2 text-yellow-400 hover:bg-yellow-500 hover:text-black"
+                >
+                  −
+                </button>
+
+
+                {/* ZOOM LEVEL */}
+                <div className="min-w-[70px] rounded-xl border border-yellow-500/20 px-4 py-2 text-center text-sm text-zinc-400">
+                  {Math.round(zoom * 100)}%
+                </div>
+
+
+                {/* ZOOM IN */}
+                <button
+                  onClick={() =>
+                    setZoom((value) =>
+                      Math.min(
+                        3,
+                        value + 0.25
+                      )
+                    )
+                  }
+                  className="rounded-xl border border-yellow-500/30 px-4 py-2 text-yellow-400 hover:bg-yellow-500 hover:text-black"
+                >
+                  +
+                </button>
+
+
+                {/* SHARE */}
+                <button
+                  onClick={() =>
+                    shareProduct(
+                      selectedPhoto
+                    )
+                  }
+                  className="rounded-xl border border-yellow-500/30 px-4 py-2 text-yellow-400 hover:bg-yellow-500 hover:text-black"
+                >
+                  📤 Share
+                </button>
+
+
+                {/* DOWNLOAD */}
+                <button
+                  onClick={() =>
+                    downloadPhoto(
+                      selectedPhoto
+                    )
+                  }
+                  className="rounded-xl bg-yellow-500 px-4 py-2 font-semibold text-black hover:bg-yellow-400"
+                >
+                  ⬇️ Download
+                </button>
+
+
+                {/* WHATSAPP */}
+                <button
+                  onClick={() =>
+                    whatsappEnquiry(
+                      selectedPhoto
+                    )
+                  }
+                  className="rounded-xl border border-yellow-500/30 px-4 py-2 text-yellow-400 hover:bg-yellow-500 hover:text-black"
+                >
+                  💬 WhatsApp
+                </button>
+
+              </div>
+
+              <p className="mt-3 text-center text-xs text-zinc-600">
+                Click image to zoom • Use ← → for
+                photos • ESC to close
+              </p>
+
+            </div>
+
+          </div>
+
+        )}
 
     </main>
   );

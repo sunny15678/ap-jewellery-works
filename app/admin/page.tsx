@@ -179,7 +179,7 @@ export default function AdminPage() {
             {/* 22K */}
             <div>
               <label className="block text-sm text-gray-300 mb-2">
-                22K Rate / 10g
+                22K Rate / 8g
               </label>
 
               <input
@@ -194,7 +194,7 @@ export default function AdminPage() {
             {/* 24K */}
             <div>
               <label className="block text-sm text-gray-300 mb-2">
-                24K Rate / 10g
+                24K Rate / 8g
               </label>
 
               <input
