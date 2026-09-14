@@ -7,6 +7,7 @@ type UploadItem = {
   id: string;
   file: File;
   name: string;
+  category: string;
   status: "waiting" | "uploading" | "success" | "error";
   error?: string;
 };
@@ -26,6 +27,18 @@ export default function AdminPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
+
+  const categories = [
+    "Necklaces",
+    "Chains",
+    "Rings",
+    "Bangles",
+    "Earrings",
+    "Bracelets",
+    "Pendants",
+  ];
+
+  const [bulkCategory, setBulkCategory] = useState("Rings");
 
   useEffect(() => {
     checkAdmin();
@@ -153,6 +166,7 @@ export default function AdminPage() {
         id: `${Date.now()}-${index}-${Math.random()}`,
         file,
         name: filename,
+        category: bulkCategory,
         status: "waiting",
       };
     });
@@ -175,6 +189,30 @@ export default function AdminPage() {
           : item
       )
     );
+  }
+
+  function updateImageCategory(id: string, category: string) {
+    setUploadItems((items) =>
+      items.map((item) =>
+        item.id === id
+          ? { ...item, category }
+          : item
+      )
+    );
+  }
+
+  function applyCategoryToAll() {
+    if (uploadItems.length === 0) return;
+
+    setUploadItems((items) =>
+      items.map((item) =>
+        item.status === "waiting"
+          ? { ...item, category: bulkCategory }
+          : item
+      )
+    );
+
+    setUploadMessage(`Category "${bulkCategory}" applied to all waiting images.`);
   }
 
   function removeImage(id: string) {
@@ -268,7 +306,7 @@ export default function AdminPage() {
           .from("jewellery")
           .insert({
             name: item.name.trim(),
-            category: "Jewellery",
+            category: item.category,
             description: null,
             purity: null,
             weight: null,
@@ -440,7 +478,7 @@ export default function AdminPage() {
             </h2>
 
             <p className="text-gray-400 text-sm mt-1">
-              Select up to 100 images and give each image its own name.
+              Select up to 100 images, edit their names, and choose categories.
             </p>
           </div>
 
@@ -480,17 +518,45 @@ export default function AdminPage() {
           {uploadItems.length > 0 && (
             <div className="mt-6">
               <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                <h3 className="text-lg font-semibold">
-                  Image Names
-                </h3>
+                <div>
+                  <h3 className="text-lg font-semibold">
+                    Image Names & Categories
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Choose one category for all images or change each image individually.
+                  </p>
+                </div>
 
-                <button
-                  onClick={clearImages}
-                  disabled={uploading}
-                  className="text-red-400 border border-red-500/30 px-4 py-2 rounded-lg text-sm hover:bg-red-500/10 disabled:opacity-50"
-                >
-                  Clear All
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={bulkCategory}
+                    onChange={(e) => setBulkCategory(e.target.value)}
+                    disabled={uploading}
+                    className="bg-black border border-gray-700 rounded-lg px-3 py-2 text-white focus:border-[#D4AF37] outline-none"
+                  >
+                    {categories.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    onClick={applyCategoryToAll}
+                    disabled={uploading}
+                    className="border border-[#D4AF37]/50 text-[#D4AF37] px-4 py-2 rounded-lg text-sm hover:bg-[#D4AF37]/10 disabled:opacity-50"
+                  >
+                    Apply to All
+                  </button>
+
+                                   <button
+                    onClick={clearImages}
+                    disabled={uploading}
+                    className="text-red-400 border border-red-500/30 px-4 py-2 rounded-lg text-sm hover:bg-red-500/10 disabled:opacity-50"
+                  >
+                    Clear All
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-3">
@@ -547,9 +613,20 @@ export default function AdminPage() {
                           Category
                         </label>
 
-                        <div className="border border-gray-800 rounded-lg px-3 py-3 text-sm text-gray-400">
-                          Jewellery
-                        </div>
+                        <select
+                          value={item.category}
+                          onChange={(e) =>
+                            updateImageCategory(item.id, e.target.value)
+                          }
+                          disabled={item.status !== "waiting"}
+                          className="w-full bg-black border border-gray-700 rounded-lg px-3 py-3 text-white focus:border-[#D4AF37] outline-none disabled:opacity-60"
+                        >
+                          {categories.map((category) => (
+                            <option key={category} value={category}>
+                              {category}
+                            </option>
+                          ))}
+                        </select>
                       </div>
 
                       {/* Status */}
